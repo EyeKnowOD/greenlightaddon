@@ -1,0 +1,22 @@
+{
+  "name": "greenlightaddon",
+  "version": "1.0.0",
+  "description": "Greenlight Addon example",
+  "main": "index.js",
+  "devDependencies": {
+    "@wordpress/scripts": "^30.23.0"
+  },
+  "dependencies": {
+    "lodash": "^4.17.21"
+  },
+  "scripts": {
+    "start": "wp-scripts start",
+    "build": "wp-scripts build",
+    "check-engines": "wp-scripts check-engines",
+    "packages-update": "wp-scripts packages-update",
+    "lint:js": "wp-scripts lint-js",
+    "lint:style": "wp-scripts lint-style"
+  },
+  "author": "Wpsoul",
+  "license": "ISC"
+}

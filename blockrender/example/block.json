@@ -1,0 +1,9 @@
+{
+	"apiVersion": 2,
+	"name": "greenlightaddon/example",
+    "title": "Example",
+    "description": "As Example",
+	"category":"greenLightAddon",
+	"textdomain": "greenlightaddon",
+	"editorStyle": "greenLightAddon-block-css"
+}
