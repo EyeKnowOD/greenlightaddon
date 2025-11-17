@@ -132,3 +132,21 @@ if (!function_exists('greenLightAddon_block_script_assets')) {
 		return $html;
 	}
 }
+
+//////////////////////////////////////////////////////////////////
+// Enqueue frontend mobile improvements CSS
+//////////////////////////////////////////////////////////////////
+add_action('wp_enqueue_scripts', 'greenLightAddon_mobile_improvements');
+if (!function_exists('greenLightAddon_mobile_improvements')) {
+	function greenLightAddon_mobile_improvements()
+	{
+		// Enqueue mobile search improvements CSS
+		wp_enqueue_style(
+			'greenLightAddon-mobile-search',
+			GREENLIGHTADDON_DIR_URL . 'build/mobile-search-improvements.css',
+			array(),
+			'1.0.0',
+			'all'
+		);
+	}
+}
