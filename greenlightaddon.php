@@ -142,19 +142,65 @@ if (!function_exists('greenLightAddon_remove_filter_counter')) {
 	{
 		?>
 		<script>
-		document.addEventListener('DOMContentLoaded', function() {
-			// Target the specific filter or all Greenshift select filters
-			var selects = document.querySelectorAll('.gspb-filterpanel select, .gspb-select');
+		(function() {
+			function removeCounters() {
+				// Target options with data-counter attributes
+				var options = document.querySelectorAll('option[data-counter-prefix], option[data-counter-suffix]');
 
-			selects.forEach(function(select) {
-				var options = select.querySelectorAll('option');
 				options.forEach(function(option) {
+					// Clear the data-counter attributes to prevent re-adding
+					option.removeAttribute('data-counter-prefix');
+					option.removeAttribute('data-counter-suffix');
+
 					// Remove counter pattern like "(3)" or "(0)" from end of text
 					var text = option.textContent;
 					option.textContent = text.replace(/\s*\(\d+\)\s*$/, '').trim();
 				});
+
+				// Also target by class selectors as fallback
+				var selects = document.querySelectorAll('.gspb-select, .gspb-taxonomy-filter-select');
+				selects.forEach(function(select) {
+					select.querySelectorAll('option').forEach(function(option) {
+						option.removeAttribute('data-counter-prefix');
+						option.removeAttribute('data-counter-suffix');
+						var text = option.textContent;
+						option.textContent = text.replace(/\s*\(\d+\)\s*$/, '').trim();
+					});
+				});
+			}
+
+			// Run on DOMContentLoaded
+			document.addEventListener('DOMContentLoaded', removeCounters);
+
+			// Run again after a short delay to catch dynamically loaded content
+			document.addEventListener('DOMContentLoaded', function() {
+				setTimeout(removeCounters, 100);
+				setTimeout(removeCounters, 500);
+				setTimeout(removeCounters, 1000);
 			});
-		});
+
+			// Watch for DOM changes with MutationObserver
+			document.addEventListener('DOMContentLoaded', function() {
+				var observer = new MutationObserver(function(mutations) {
+					var shouldRun = false;
+					mutations.forEach(function(mutation) {
+						if (mutation.type === 'childList' || mutation.type === 'characterData') {
+							shouldRun = true;
+						}
+					});
+					if (shouldRun) {
+						removeCounters();
+					}
+				});
+
+				// Observe the entire document for changes
+				observer.observe(document.body, {
+					childList: true,
+					subtree: true,
+					characterData: true
+				});
+			});
+		})();
 		</script>
 		<?php
 	}
