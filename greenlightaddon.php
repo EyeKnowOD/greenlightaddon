@@ -132,3 +132,30 @@ if (!function_exists('greenLightAddon_block_script_assets')) {
 		return $html;
 	}
 }
+
+//////////////////////////////////////////////////////////////////
+// Remove counter from Greenshift filter dropdown options
+//////////////////////////////////////////////////////////////////
+add_action('wp_footer', 'greenLightAddon_remove_filter_counter');
+if (!function_exists('greenLightAddon_remove_filter_counter')) {
+	function greenLightAddon_remove_filter_counter()
+	{
+		?>
+		<script>
+		document.addEventListener('DOMContentLoaded', function() {
+			// Target the specific filter or all Greenshift select filters
+			var selects = document.querySelectorAll('.gspb-filterpanel select, .gspb-select');
+
+			selects.forEach(function(select) {
+				var options = select.querySelectorAll('option');
+				options.forEach(function(option) {
+					// Remove counter pattern like "(3)" or "(0)" from end of text
+					var text = option.textContent;
+					option.textContent = text.replace(/\s*\(\d+\)\s*$/, '').trim();
+				});
+			});
+		});
+		</script>
+		<?php
+	}
+}
