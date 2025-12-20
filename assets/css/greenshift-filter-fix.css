@@ -1,0 +1,225 @@
+/**
+ * Greenshift Filter & Popup Fix - CSS
+ *
+ * Ensures popups and filtering work correctly after AJAX content replacement
+ *
+ * @version 1.0.0
+ */
+
+/* ============================================
+   POPUP/SLIDING PANEL VISIBILITY FIXES
+   ============================================ */
+
+/* Ensure popups are properly hidden by default */
+.gspb_popup,
+.gs-popup,
+.gspb_slidingpanel,
+.gs-sliding-panel {
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+
+/* Active state - visible */
+.gspb_popup.is-active,
+.gspb_popup.gs-popup-active,
+.gspb_popup.gspb_popup_active,
+.gs-popup.is-active,
+.gspb_slidingpanel.is-active,
+.gs-sliding-panel.is-active {
+    visibility: visible !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+}
+
+/* Body class when popup is open */
+body.gs-popup-open,
+body.gspb-popup-open {
+    overflow: hidden;
+}
+
+/* ============================================
+   POPUP TRIGGERS IN LOOP ITEMS
+   ============================================ */
+
+/* Make loop items with popup triggers clickable */
+.gspb_query_builder_item[data-popup],
+.gs-query-item[data-popup],
+[data-popup] {
+    cursor: pointer;
+}
+
+/* Hover effect for clickable items */
+.gspb_query_builder_item[data-popup]:hover,
+.gs-query-item[data-popup]:hover {
+    opacity: 0.9;
+}
+
+/* ============================================
+   FILTER SORTING PERSISTENCE INDICATOR
+   ============================================ */
+
+/* Visual feedback when sorting is active */
+.gspb_filtersorting select:not([value=""]),
+.gs-filter-sorting select:not([value=""]) {
+    border-color: var(--gs-primary-color, #0073aa);
+    box-shadow: 0 0 0 1px var(--gs-primary-color, #0073aa);
+}
+
+/* ============================================
+   LOADING STATES
+   ============================================ */
+
+/* Query loop loading state */
+.gspb_query_builder.is-loading,
+.wp-block-flavor-query.is-loading {
+    position: relative;
+    pointer-events: none;
+}
+
+.gspb_query_builder.is-loading::after,
+.wp-block-flavor-query.is-loading::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255, 255, 255, 0.7);
+    z-index: 10;
+}
+
+/* Loading spinner (optional) */
+.gspb_query_builder.is-loading::before,
+.wp-block-flavor-query.is-loading::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 40px;
+    height: 40px;
+    margin: -20px 0 0 -20px;
+    border: 3px solid #f3f3f3;
+    border-top: 3px solid var(--gs-primary-color, #0073aa);
+    border-radius: 50%;
+    animation: gs-spin 1s linear infinite;
+    z-index: 11;
+}
+
+@keyframes gs-spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* ============================================
+   FILTER PANEL RESPONSIVENESS
+   ============================================ */
+
+/* Ensure filter items remain interactive after AJAX */
+.gspb_filteritem,
+.gs-filter-item,
+.gspb_filterpanel input,
+.gspb_filterpanel select,
+.gspb_filterpanel label {
+    cursor: pointer;
+    user-select: none;
+}
+
+/* Active filter state */
+.gspb_filteritem.is-active,
+.gs-filter-item.is-active {
+    font-weight: 600;
+}
+
+/* ============================================
+   DYNAMIC CONTENT TRANSITIONS
+   ============================================ */
+
+/* Smooth transitions when content is replaced */
+.gspb_query_builder_item,
+.gs-query-item {
+    transition: opacity 0.2s ease-in-out;
+}
+
+/* Fade in new items */
+.gspb_query_builder_item.gs-new-item,
+.gs-query-item.gs-new-item {
+    animation: gs-fade-in 0.3s ease-in-out;
+}
+
+@keyframes gs-fade-in {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* ============================================
+   Z-INDEX MANAGEMENT
+   ============================================ */
+
+/* Ensure popups appear above everything */
+.gspb_popup,
+.gs-popup {
+    z-index: 999999 !important;
+}
+
+.gspb_popup_overlay,
+.gs-popup-overlay {
+    z-index: 999998 !important;
+}
+
+.gspb_slidingpanel,
+.gs-sliding-panel {
+    z-index: 999997 !important;
+}
+
+/* Filter panel should be above content but below popups */
+.gspb_filterpanel {
+    z-index: 100;
+}
+
+/* ============================================
+   ACCESSIBILITY IMPROVEMENTS
+   ============================================ */
+
+/* Focus states for keyboard navigation */
+.gspb_filteritem:focus,
+.gs-filter-item:focus,
+[data-popup]:focus {
+    outline: 2px solid var(--gs-primary-color, #0073aa);
+    outline-offset: 2px;
+}
+
+/* Screen reader only class for accessibility */
+.gs-sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* ============================================
+   PRINT STYLES
+   ============================================ */
+
+@media print {
+    .gspb_popup,
+    .gs-popup,
+    .gspb_slidingpanel,
+    .gs-sliding-panel,
+    .gspb_filterpanel,
+    .gspb_filtersorting {
+        display: none !important;
+    }
+}
