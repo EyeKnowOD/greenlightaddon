@@ -2,10 +2,15 @@
  * Greenshift Filter & Popup Fix
  *
  * Fixes two issues with Greenshift Query Loops:
- * 1. Sorting resets after applying filters
- * 2. Popups/Sliding panels stop working after AJAX content replacement
+ * 1. Sorting is lost when filters are applied (URL doesn't preserve sort param)
+ * 2. Popups/dynamic content stops working after filter navigation
  *
- * @version 1.0.0
+ * How it works:
+ * - Intercepts filter link clicks and form submissions
+ * - Injects current sorting value into the URL before navigation
+ * - Reinitializes popups after page load
+ *
+ * @version 2.0.0
  * @author EyeKnowOD
  */
 
@@ -13,543 +18,451 @@
     'use strict';
 
     // ============================================
-    // CONFIGURATION - Adjust these if needed
+    // CONFIGURATION
     // ============================================
     const CONFIG = {
-        // Debug mode - set to true to see console logs
         debug: false,
 
-        // Selectors for Greenshift elements
-        selectors: {
-            queryLoop: '.gspb_query_builder, .wp-block-flavor-query',
-            filterPanel: '.gspb_filterpanel',
-            filterSorting: '.gspb_filtersorting, .gs-filter-sorting',
-            sortingSelect: '.gspb_filtersorting select, .gs-filter-sorting select',
-            popup: '.gspb_popup, .gs-popup',
-            slidingPanel: '.gspb_slidingpanel, .gs-sliding-panel',
-            popupTrigger: '[data-popup], [data-sliding-panel], .gs-popup-trigger, .gspb_popup_trigger',
-            loopItem: '.gspb_query_builder_item, .gs-query-item, .wp-block-flavor-query > *'
-        },
+        // Storage keys
+        storageKey: 'gs_sort_value',
 
-        // Storage key for sorting preference
-        sortingStorageKey: 'gs_filter_sorting_state'
+        // URL parameter names (Greenshift uses these)
+        sortParams: ['orderby', 'order', 'gspb_sort', 'sort', 'sortby'],
+
+        // Selectors
+        selectors: {
+            // Filter Sorting block
+            sortingBlock: '.gspb_filtersorting, .gs-filter-sorting, [class*="filtersorting"]',
+            sortingSelect: '.gspb_filtersorting select, .gs-filter-sorting select, [class*="filtersorting"] select',
+
+            // Filter Panel and items
+            filterPanel: '.gspb_filterpanel, .gs-filter-panel, [class*="filterpanel"]',
+            filterItem: '.gspb_filteritem, .gs-filter-item, [class*="filteritem"]',
+            filterLink: '.gspb_filterpanel a, .gspb_filteritem a, [data-filter]',
+            filterCheckbox: '.gspb_filterpanel input[type="checkbox"], .gspb_filterpanel input[type="radio"]',
+
+            // Query loop
+            queryLoop: '.gspb_query_builder, .wp-block-flavor-query, [class*="query_builder"]',
+
+            // Popups
+            popup: '.gspb_popup, .gs-popup, [class*="gspb_popup"]',
+            popupTrigger: '[data-popup], [data-sliding], .gspb_popup_trigger, [href*="#gspb_popup"]',
+            slidingPanel: '.gspb_slidingpanel, .gs-sliding-panel'
+        }
     };
 
-    // ============================================
-    // UTILITY FUNCTIONS
-    // ============================================
-
     function log(...args) {
-        if (CONFIG.debug) {
-            console.log('[GS-Filter-Fix]', ...args);
-        }
-    }
-
-    function debounce(func, wait) {
-        let timeout;
-        return function executedFunction(...args) {
-            const later = () => {
-                clearTimeout(timeout);
-                func(...args);
-            };
-            clearTimeout(timeout);
-            timeout = setTimeout(later, wait);
-        };
+        if (CONFIG.debug) console.log('[GS-Fix]', ...args);
     }
 
     // ============================================
-    // SORTING PRESERVATION
+    // URL & SORTING MANAGEMENT
     // ============================================
 
     const SortingManager = {
-        // Store current sorting states by query ID
-        sortingStates: {},
 
-        init() {
-            this.bindSortingChangeEvents();
-            this.restoreFromStorage();
-            log('SortingManager initialized');
-        },
-
-        // Listen for sorting dropdown changes
-        bindSortingChangeEvents() {
-            document.addEventListener('change', (e) => {
-                const sortingSelect = e.target.closest(CONFIG.selectors.sortingSelect);
-                if (sortingSelect) {
-                    const queryId = this.getConnectedQueryId(sortingSelect);
-                    if (queryId) {
-                        this.sortingStates[queryId] = sortingSelect.value;
-                        this.saveToStorage();
-                        log('Sorting changed:', queryId, sortingSelect.value);
-                    }
-                }
-            });
-        },
-
-        // Get the connected Query Builder ID from the sorting block
-        getConnectedQueryId(element) {
-            const container = element.closest(CONFIG.selectors.filterSorting);
-            if (container) {
-                // Try data attribute first
-                let queryId = container.dataset.queryId ||
-                              container.dataset.connectionId ||
-                              container.getAttribute('data-query-id');
-
-                // Fallback: look for ID in class names
-                if (!queryId) {
-                    const classes = container.className.split(' ');
-                    for (const cls of classes) {
-                        if (cls.startsWith('gs-connected-') || cls.startsWith('gspb-query-')) {
-                            queryId = cls.replace('gs-connected-', '').replace('gspb-query-', '');
-                            break;
-                        }
-                    }
-                }
-
-                // Fallback: use a generic key based on page URL
-                if (!queryId) {
-                    queryId = 'page-' + window.location.pathname.replace(/\//g, '-');
-                }
-
-                return queryId;
+        // Get current sorting value from the dropdown
+        getCurrentSortValue() {
+            const select = document.querySelector(CONFIG.selectors.sortingSelect);
+            if (select && select.value) {
+                log('Current sort value:', select.value);
+                return select.value;
             }
             return null;
         },
 
-        // Restore sorting after AJAX
-        restoreSorting(queryId) {
-            const savedValue = this.sortingStates[queryId];
-            if (savedValue) {
-                const sortingSelects = document.querySelectorAll(CONFIG.selectors.sortingSelect);
-                sortingSelects.forEach(select => {
-                    const selectQueryId = this.getConnectedQueryId(select);
-                    if (selectQueryId === queryId || !queryId) {
-                        if (select.value !== savedValue) {
-                            select.value = savedValue;
-                            log('Restored sorting:', savedValue);
-
-                            // Trigger change event to notify Greenshift
-                            select.dispatchEvent(new Event('change', { bubbles: true }));
-                        }
-                    }
-                });
-            }
-        },
-
-        // Save to sessionStorage for page persistence
-        saveToStorage() {
-            try {
-                sessionStorage.setItem(CONFIG.sortingStorageKey, JSON.stringify(this.sortingStates));
-            } catch (e) {
-                log('Storage error:', e);
-            }
-        },
-
-        // Restore from sessionStorage
-        restoreFromStorage() {
-            try {
-                const saved = sessionStorage.getItem(CONFIG.sortingStorageKey);
-                if (saved) {
-                    this.sortingStates = JSON.parse(saved);
-                    log('Restored states from storage:', this.sortingStates);
+        // Get sorting from URL parameters
+        getSortFromURL() {
+            const params = new URLSearchParams(window.location.search);
+            for (const param of CONFIG.sortParams) {
+                if (params.has(param)) {
+                    return { param: param, value: params.get(param) };
                 }
+            }
+            return null;
+        },
+
+        // Store sorting value in sessionStorage
+        storeSortValue(value) {
+            if (value) {
+                try {
+                    sessionStorage.setItem(CONFIG.storageKey, value);
+                    log('Stored sort value:', value);
+                } catch (e) {
+                    log('Storage error:', e);
+                }
+            }
+        },
+
+        // Retrieve stored sorting value
+        getStoredSortValue() {
+            try {
+                return sessionStorage.getItem(CONFIG.storageKey);
             } catch (e) {
-                log('Storage restore error:', e);
+                return null;
+            }
+        },
+
+        // Add sorting parameter to a URL
+        addSortToURL(url, sortValue) {
+            if (!sortValue) return url;
+
+            try {
+                const urlObj = new URL(url, window.location.origin);
+
+                // Check if sort param already exists
+                let hasSort = false;
+                for (const param of CONFIG.sortParams) {
+                    if (urlObj.searchParams.has(param)) {
+                        hasSort = true;
+                        break;
+                    }
+                }
+
+                // Add sorting if not present
+                if (!hasSort) {
+                    // Use 'orderby' as the default param name (common in WP)
+                    urlObj.searchParams.set('orderby', sortValue);
+                    log('Added sort to URL:', urlObj.toString());
+                }
+
+                return urlObj.toString();
+            } catch (e) {
+                log('URL parse error:', e);
+                return url;
+            }
+        },
+
+        // Apply stored sorting to dropdown on page load
+        applySortToDropdown() {
+            const storedValue = this.getStoredSortValue();
+            const urlSort = this.getSortFromURL();
+
+            const valueToApply = urlSort?.value || storedValue;
+
+            if (valueToApply) {
+                const select = document.querySelector(CONFIG.selectors.sortingSelect);
+                if (select) {
+                    // Check if option exists
+                    const optionExists = Array.from(select.options).some(opt => opt.value === valueToApply);
+                    if (optionExists) {
+                        select.value = valueToApply;
+                        log('Applied sort to dropdown:', valueToApply);
+                    }
+                }
             }
         }
     };
 
     // ============================================
-    // POPUP/SLIDING PANEL REINITIALIZATION
+    // FILTER INTERCEPTION
+    // ============================================
+
+    const FilterInterceptor = {
+
+        init() {
+            // Intercept filter link clicks
+            this.interceptLinks();
+
+            // Intercept filter checkbox/radio changes
+            this.interceptInputs();
+
+            // Intercept sorting changes
+            this.interceptSorting();
+
+            // Handle browser back/forward
+            this.handlePopState();
+
+            log('FilterInterceptor initialized');
+        },
+
+        // Intercept all filter link clicks
+        interceptLinks() {
+            document.addEventListener('click', (e) => {
+                const link = e.target.closest('a');
+                if (!link) return;
+
+                // Check if this is a filter-related link
+                const isFilterLink = link.closest(CONFIG.selectors.filterPanel) ||
+                                    link.closest(CONFIG.selectors.filterItem) ||
+                                    link.href?.includes('filter_') ||
+                                    link.href?.includes('gspb_filter');
+
+                if (isFilterLink && link.href) {
+                    const currentSort = SortingManager.getCurrentSortValue();
+
+                    if (currentSort) {
+                        e.preventDefault();
+
+                        // Store the sort value
+                        SortingManager.storeSortValue(currentSort);
+
+                        // Add sort to URL and navigate
+                        const newURL = SortingManager.addSortToURL(link.href, currentSort);
+                        log('Intercepted filter link, redirecting to:', newURL);
+
+                        window.location.href = newURL;
+                    }
+                }
+            }, true);
+        },
+
+        // Intercept checkbox/radio filter changes
+        interceptInputs() {
+            document.addEventListener('change', (e) => {
+                const input = e.target;
+
+                // Check if this is a filter input
+                const isFilterInput = input.closest(CONFIG.selectors.filterPanel) &&
+                                     (input.type === 'checkbox' || input.type === 'radio');
+
+                if (isFilterInput) {
+                    const currentSort = SortingManager.getCurrentSortValue();
+                    if (currentSort) {
+                        SortingManager.storeSortValue(currentSort);
+                        log('Stored sort before filter change:', currentSort);
+                    }
+                }
+            });
+        },
+
+        // Intercept sorting dropdown changes
+        interceptSorting() {
+            document.addEventListener('change', (e) => {
+                const select = e.target.closest(CONFIG.selectors.sortingSelect);
+                if (select) {
+                    const newValue = select.value;
+                    SortingManager.storeSortValue(newValue);
+                    log('Sort changed to:', newValue);
+
+                    // If sorting changes, update the current URL
+                    const currentURL = new URL(window.location.href);
+                    currentURL.searchParams.set('orderby', newValue);
+
+                    // Use replaceState to update URL without reload
+                    // This ensures the sort param is in the URL for next filter click
+                    window.history.replaceState({}, '', currentURL.toString());
+                    log('Updated URL with sort:', currentURL.toString());
+                }
+            });
+        },
+
+        // Handle browser back/forward navigation
+        handlePopState() {
+            window.addEventListener('popstate', () => {
+                SortingManager.applySortToDropdown();
+                setTimeout(() => PopupManager.reinitialize(), 100);
+            });
+        }
+    };
+
+    // ============================================
+    // POPUP REINITIALIZATION
     // ============================================
 
     const PopupManager = {
+
         init() {
+            // Set up event delegation for popups
+            this.setupEventDelegation();
+
+            // Initial popup binding
+            this.reinitialize();
+
             log('PopupManager initialized');
         },
 
-        // Reinitialize all Greenshift interactive elements
-        reinitializeAll() {
-            log('Reinitializing popups and sliding panels...');
+        // Reinitialize all popup functionality
+        reinitialize() {
+            log('Reinitializing popups...');
 
-            // Method 1: Trigger Greenshift's own reinitialization
-            this.triggerGreenshiftReinit();
+            // Method 1: Try Greenshift's native functions
+            this.tryNativeReinit();
 
-            // Method 2: Manually rebind popup triggers
-            this.rebindPopupTriggers();
-
-            // Method 3: Reinitialize sliding panels
-            this.reinitSlidingPanels();
+            // Method 2: Re-scan and bind popups
+            this.bindPopupTriggers();
         },
 
-        // Try to call Greenshift's initialization functions
-        triggerGreenshiftReinit() {
-            // Greenshift stores its functions in window.gspbHooks or gspb_hooks
-            if (typeof window.gspbHooks !== 'undefined') {
-                log('Found gspbHooks, reinitializing...');
+        // Try to call Greenshift's native initialization
+        tryNativeReinit() {
+            // Various possible Greenshift global objects/methods
+            const attempts = [
+                () => window.gspbHooks?.initPopups?.(),
+                () => window.gspbHooks?.initSlidingPanels?.(),
+                () => window.gspbHooks?.initAll?.(),
+                () => window.gspb?.initInteractions?.(),
+                () => window.gspb?.popup?.init?.(),
+                () => window.gsQuery?.init?.(),
+                () => document.dispatchEvent(new CustomEvent('gspb_content_loaded')),
+                () => document.dispatchEvent(new CustomEvent('gspb_reinit'))
+            ];
 
-                // Try common initialization methods
-                if (typeof window.gspbHooks.initPopups === 'function') {
-                    window.gspbHooks.initPopups();
-                }
-                if (typeof window.gspbHooks.initSlidingPanels === 'function') {
-                    window.gspbHooks.initSlidingPanels();
-                }
-                if (typeof window.gspbHooks.initAll === 'function') {
-                    window.gspbHooks.initAll();
-                }
-            }
-
-            // Alternative: gspb global object
-            if (typeof window.gspb !== 'undefined') {
-                if (typeof window.gspb.initInteractions === 'function') {
-                    window.gspb.initInteractions();
-                }
-            }
-
-            // Alternative: FLAVOR query (Greenshift Query addon)
-            if (typeof window.gsQueryInit !== 'undefined') {
-                window.gsQueryInit();
-            }
-
-            // Trigger custom event that Greenshift might listen to
-            document.dispatchEvent(new CustomEvent('gspb_content_loaded'));
-            document.dispatchEvent(new CustomEvent('gspb_ajax_complete'));
-
-            // Trigger WordPress block reinitialization event
-            document.dispatchEvent(new CustomEvent('DOMContentLoaded'));
-        },
-
-        // Manually rebind popup triggers using event delegation
-        rebindPopupTriggers() {
-            const popups = document.querySelectorAll(CONFIG.selectors.popup);
-
-            popups.forEach(popup => {
-                const triggerId = popup.id || popup.dataset.popupId;
-                if (triggerId) {
-                    // Find all triggers for this popup
-                    const triggers = document.querySelectorAll(
-                        `[data-popup="${triggerId}"], [href="#${triggerId}"], [data-target="${triggerId}"]`
-                    );
-
-                    triggers.forEach(trigger => {
-                        // Remove existing listeners by cloning
-                        const newTrigger = trigger.cloneNode(true);
-                        trigger.parentNode.replaceChild(newTrigger, trigger);
-
-                        newTrigger.addEventListener('click', (e) => {
-                            e.preventDefault();
-                            this.openPopup(popup);
-                        });
-                    });
-                }
+            attempts.forEach(fn => {
+                try { fn(); } catch (e) { /* ignore */ }
             });
         },
 
-        // Basic popup open function (fallback)
+        // Event delegation - this works regardless of when content loads
+        setupEventDelegation() {
+            document.addEventListener('click', (e) => {
+                const trigger = e.target.closest(CONFIG.selectors.popupTrigger);
+                if (!trigger) return;
+
+                // Get popup ID from various attributes
+                const popupId = this.getPopupId(trigger);
+                if (!popupId) return;
+
+                // Find the popup element
+                const popup = document.getElementById(popupId) ||
+                             document.querySelector(`[data-popup-id="${popupId}"]`) ||
+                             document.querySelector(`.${popupId}`);
+
+                if (popup) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    log('Opening popup:', popupId);
+                    this.openPopup(popup);
+                }
+            }, true);
+        },
+
+        // Extract popup ID from trigger element
+        getPopupId(trigger) {
+            // Try various attributes
+            let id = trigger.dataset.popup ||
+                    trigger.dataset.sliding ||
+                    trigger.dataset.slidingPanel ||
+                    trigger.dataset.target ||
+                    trigger.dataset.popupId;
+
+            // Try href
+            if (!id) {
+                const href = trigger.getAttribute('href');
+                if (href?.startsWith('#')) {
+                    id = href.substring(1);
+                }
+            }
+
+            // Try aria-controls
+            if (!id) {
+                id = trigger.getAttribute('aria-controls');
+            }
+
+            return id;
+        },
+
+        // Open a popup
         openPopup(popup) {
-            popup.classList.add('is-active', 'gs-popup-active', 'gspb_popup_active');
+            // Try native Greenshift method first
+            if (typeof window.gspbHooks?.openPopup === 'function') {
+                window.gspbHooks.openPopup(popup);
+                return;
+            }
+
+            // Fallback: manual open
+            popup.classList.add('is-active', 'gspb_popup_active', 'gs-popup-active');
             popup.style.display = 'block';
             popup.style.visibility = 'visible';
             popup.style.opacity = '1';
-            document.body.classList.add('gs-popup-open', 'gspb-popup-open');
+            document.body.classList.add('gspb-popup-open', 'popup-open');
 
-            // Find and bind close button
-            const closeBtn = popup.querySelector('.gs-popup-close, .gspb_popup_close, [data-close]');
-            if (closeBtn) {
-                closeBtn.addEventListener('click', () => this.closePopup(popup), { once: true });
-            }
+            // Bind close handlers
+            this.bindCloseHandlers(popup);
 
-            // Close on overlay click
-            const overlay = popup.querySelector('.gs-popup-overlay, .gspb_popup_overlay');
-            if (overlay) {
-                overlay.addEventListener('click', () => this.closePopup(popup), { once: true });
-            }
+            // Trigger event for other scripts
+            popup.dispatchEvent(new CustomEvent('popup:opened'));
         },
 
+        // Close a popup
         closePopup(popup) {
-            popup.classList.remove('is-active', 'gs-popup-active', 'gspb_popup_active');
+            popup.classList.remove('is-active', 'gspb_popup_active', 'gs-popup-active');
             popup.style.display = '';
             popup.style.visibility = '';
             popup.style.opacity = '';
-            document.body.classList.remove('gs-popup-open', 'gspb-popup-open');
+            document.body.classList.remove('gspb-popup-open', 'popup-open');
+
+            popup.dispatchEvent(new CustomEvent('popup:closed'));
         },
 
-        // Reinitialize sliding panels
-        reinitSlidingPanels() {
-            const panels = document.querySelectorAll(CONFIG.selectors.slidingPanel);
+        // Bind close button and overlay click handlers
+        bindCloseHandlers(popup) {
+            // Close button
+            const closeBtn = popup.querySelector('.gspb_popup_close, .gs-popup-close, [data-close], .popup-close');
+            if (closeBtn) {
+                closeBtn.onclick = (e) => {
+                    e.preventDefault();
+                    this.closePopup(popup);
+                };
+            }
 
-            panels.forEach(panel => {
-                const panelId = panel.id || panel.dataset.panelId;
-                if (panelId) {
-                    const triggers = document.querySelectorAll(
-                        `[data-sliding-panel="${panelId}"], [data-panel="${panelId}"]`
-                    );
+            // Overlay click
+            const overlay = popup.querySelector('.gspb_popup_overlay, .gs-popup-overlay, .popup-overlay');
+            if (overlay) {
+                overlay.onclick = () => this.closePopup(popup);
+            }
 
-                    triggers.forEach(trigger => {
-                        const newTrigger = trigger.cloneNode(true);
-                        trigger.parentNode.replaceChild(newTrigger, trigger);
-
-                        newTrigger.addEventListener('click', (e) => {
-                            e.preventDefault();
-                            panel.classList.toggle('is-active');
-                        });
-                    });
+            // ESC key
+            const escHandler = (e) => {
+                if (e.key === 'Escape') {
+                    this.closePopup(popup);
+                    document.removeEventListener('keydown', escHandler);
                 }
+            };
+            document.addEventListener('keydown', escHandler);
+        },
+
+        // Re-scan and bind popup triggers (for non-delegated scenarios)
+        bindPopupTriggers() {
+            const triggers = document.querySelectorAll(CONFIG.selectors.popupTrigger);
+            log(`Found ${triggers.length} popup triggers`);
+
+            triggers.forEach(trigger => {
+                // Mark as initialized to avoid double-binding
+                if (trigger.dataset.gsInitialized) return;
+                trigger.dataset.gsInitialized = 'true';
+
+                // The actual click handling is done via delegation above
+                // This just ensures triggers are discoverable
             });
         }
     };
 
     // ============================================
-    // AJAX INTERCEPTION
+    // MUTATION OBSERVER (Content Change Detection)
     // ============================================
 
-    const AjaxInterceptor = {
-        originalFetch: null,
-        originalXHR: null,
+    const ContentObserver = {
+        observer: null,
 
         init() {
-            this.interceptFetch();
-            this.interceptXHR();
-            this.observeDOM();
-            log('AjaxInterceptor initialized');
-        },
-
-        // Intercept fetch API calls
-        interceptFetch() {
-            this.originalFetch = window.fetch;
-
-            window.fetch = async (...args) => {
-                const response = await this.originalFetch.apply(window, args);
-
-                // Check if this is a Greenshift filter request
-                const url = args[0]?.url || args[0];
-                if (this.isGreenshiftRequest(url)) {
-                    log('Greenshift fetch detected:', url);
-
-                    // Clone response to read it
-                    const clonedResponse = response.clone();
-                    clonedResponse.text().then(() => {
-                        // Wait for DOM update, then reinitialize
-                        setTimeout(() => {
-                            this.onAjaxComplete();
-                        }, 100);
-                    });
-                }
-
-                return response;
-            };
-        },
-
-        // Intercept XMLHttpRequest
-        interceptXHR() {
-            const self = this;
-            const originalOpen = XMLHttpRequest.prototype.open;
-            const originalSend = XMLHttpRequest.prototype.send;
-
-            XMLHttpRequest.prototype.open = function(method, url, ...rest) {
-                this._gsUrl = url;
-                return originalOpen.apply(this, [method, url, ...rest]);
-            };
-
-            XMLHttpRequest.prototype.send = function(...args) {
-                if (self.isGreenshiftRequest(this._gsUrl)) {
-                    this.addEventListener('load', function() {
-                        log('Greenshift XHR detected:', this._gsUrl);
-                        setTimeout(() => {
-                            self.onAjaxComplete();
-                        }, 100);
-                    });
-                }
-                return originalSend.apply(this, args);
-            };
-        },
-
-        // Check if URL is a Greenshift AJAX request
-        isGreenshiftRequest(url) {
-            if (!url) return false;
-            const urlStr = url.toString().toLowerCase();
-            return urlStr.includes('admin-ajax.php') ||
-                   urlStr.includes('wp-json') ||
-                   urlStr.includes('gspb') ||
-                   urlStr.includes('greenshift') ||
-                   urlStr.includes('filter');
-        },
-
-        // Observe DOM for Greenshift content changes
-        observeDOM() {
-            const observer = new MutationObserver(debounce((mutations) => {
+            // Watch for content changes in query loops
+            this.observer = new MutationObserver((mutations) => {
                 for (const mutation of mutations) {
                     if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
-                        // Check if query loop content was replaced
                         const target = mutation.target;
-                        if (target.matches && (
-                            target.matches(CONFIG.selectors.queryLoop) ||
-                            target.closest(CONFIG.selectors.queryLoop)
-                        )) {
-                            log('Query loop content changed via DOM mutation');
-                            this.onAjaxComplete();
+
+                        // Check if query loop content changed
+                        if (target.matches?.(CONFIG.selectors.queryLoop) ||
+                            target.closest?.(CONFIG.selectors.queryLoop)) {
+                            log('Query loop content changed');
+
+                            // Debounce to avoid multiple calls
+                            clearTimeout(this.debounceTimer);
+                            this.debounceTimer = setTimeout(() => {
+                                PopupManager.reinitialize();
+                            }, 200);
                             break;
                         }
                     }
                 }
-            }, 150));
+            });
 
-            // Observe the entire document for changes
-            observer.observe(document.body, {
+            this.observer.observe(document.body, {
                 childList: true,
                 subtree: true
             });
-        },
 
-        // Called after AJAX content replacement
-        onAjaxComplete() {
-            log('AJAX complete - reinitializing...');
-
-            // Reinitialize popups
-            PopupManager.reinitializeAll();
-
-            // Note: We don't restore sorting here to avoid infinite loop
-            // The sorting should persist through the filter request itself
-        }
-    };
-
-    // ============================================
-    // GREENSHIFT HOOKS INTEGRATION
-    // ============================================
-
-    const GreenshiftHooks = {
-        init() {
-            // Wait for Greenshift to be ready
-            this.waitForGreenshift();
-
-            // Hook into filter events
-            this.bindFilterEvents();
-
-            log('GreenshiftHooks initialized');
-        },
-
-        waitForGreenshift() {
-            // Check if Greenshift's JavaScript is loaded
-            const checkInterval = setInterval(() => {
-                if (typeof window.gspbHooks !== 'undefined' ||
-                    typeof window.gspb !== 'undefined' ||
-                    document.querySelector(CONFIG.selectors.queryLoop)) {
-                    clearInterval(checkInterval);
-                    log('Greenshift detected, binding hooks...');
-                    this.bindGreenshiftHooks();
-                }
-            }, 100);
-
-            // Stop checking after 10 seconds
-            setTimeout(() => clearInterval(checkInterval), 10000);
-        },
-
-        bindGreenshiftHooks() {
-            // Hook into Greenshift's custom events
-            document.addEventListener('gspb_filter_applied', (e) => {
-                log('Filter applied event:', e.detail);
-                setTimeout(() => PopupManager.reinitializeAll(), 150);
-            });
-
-            document.addEventListener('gspb_filter_complete', (e) => {
-                log('Filter complete event:', e.detail);
-                setTimeout(() => PopupManager.reinitializeAll(), 150);
-            });
-
-            document.addEventListener('gspb_pagination_complete', (e) => {
-                log('Pagination complete event:', e.detail);
-                setTimeout(() => PopupManager.reinitializeAll(), 150);
-            });
-
-            // Alternative event names
-            document.addEventListener('gsquery_loaded', () => {
-                setTimeout(() => PopupManager.reinitializeAll(), 150);
-            });
-
-            document.addEventListener('flavor_filter_complete', () => {
-                setTimeout(() => PopupManager.reinitializeAll(), 150);
-            });
-        },
-
-        bindFilterEvents() {
-            // Listen for filter changes via event delegation
-            document.addEventListener('change', (e) => {
-                if (e.target.closest(CONFIG.selectors.filterPanel)) {
-                    log('Filter changed');
-                    // Store current sorting before filter applies
-                    const sortingSelects = document.querySelectorAll(CONFIG.selectors.sortingSelect);
-                    sortingSelects.forEach(select => {
-                        const queryId = SortingManager.getConnectedQueryId(select);
-                        if (queryId) {
-                            SortingManager.sortingStates[queryId] = select.value;
-                        }
-                    });
-                }
-            });
-
-            // Listen for filter clicks (checkboxes, radios, tags)
-            document.addEventListener('click', (e) => {
-                const filterItem = e.target.closest('.gspb_filteritem, .gs-filter-item, [data-filter]');
-                if (filterItem) {
-                    log('Filter item clicked');
-                }
-            });
-        }
-    };
-
-    // ============================================
-    // EVENT DELEGATION FOR DYNAMIC CONTENT
-    // ============================================
-
-    const EventDelegation = {
-        init() {
-            // Use event delegation on document for all popup triggers
-            // This ensures dynamically added content works
-            document.addEventListener('click', (e) => {
-                const trigger = e.target.closest(CONFIG.selectors.popupTrigger);
-                if (trigger) {
-                    const popupId = trigger.dataset.popup ||
-                                   trigger.dataset.slidingPanel ||
-                                   trigger.getAttribute('href')?.replace('#', '') ||
-                                   trigger.dataset.target;
-
-                    if (popupId) {
-                        const popup = document.getElementById(popupId) ||
-                                     document.querySelector(`[data-popup-id="${popupId}"]`) ||
-                                     document.querySelector(`.${popupId}`);
-
-                        if (popup) {
-                            e.preventDefault();
-                            log('Opening popup via delegation:', popupId);
-
-                            // Try Greenshift's native method first
-                            if (typeof window.gspbHooks?.openPopup === 'function') {
-                                window.gspbHooks.openPopup(popup);
-                            } else {
-                                PopupManager.openPopup(popup);
-                            }
-                        }
-                    }
-                }
-            });
-
-            // Handle loop item clicks that should open popups
-            document.addEventListener('click', (e) => {
-                const loopItem = e.target.closest(CONFIG.selectors.loopItem);
-                if (loopItem) {
-                    // Check if this item has a popup association
-                    const popupId = loopItem.dataset.popup ||
-                                   loopItem.dataset.openPopup ||
-                                   loopItem.querySelector('[data-popup]')?.dataset.popup;
-
-                    if (popupId) {
-                        log('Loop item clicked with popup:', popupId);
-                    }
-                }
-            });
-
-            log('EventDelegation initialized');
+            log('ContentObserver initialized');
         }
     };
 
@@ -558,40 +471,55 @@
     // ============================================
 
     function init() {
-        log('Initializing Greenshift Filter Fix...');
+        log('Initializing Greenshift Filter Fix v2.0...');
 
-        SortingManager.init();
+        // Apply stored sorting on page load
+        SortingManager.applySortToDropdown();
+
+        // Initialize modules
+        FilterInterceptor.init();
         PopupManager.init();
-        AjaxInterceptor.init();
-        GreenshiftHooks.init();
-        EventDelegation.init();
+        ContentObserver.init();
 
-        log('Greenshift Filter Fix initialized successfully');
+        log('Initialization complete');
     }
 
-    // Initialize when DOM is ready
+    // Run on DOM ready
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
     } else {
         init();
     }
 
-    // Also initialize on window load (ensures all scripts are loaded)
+    // Also run on window load for late-loading content
     window.addEventListener('load', () => {
-        // Reinitialize after a short delay to catch late-loading content
         setTimeout(() => {
-            PopupManager.reinitializeAll();
+            SortingManager.applySortToDropdown();
+            PopupManager.reinitialize();
         }, 500);
     });
 
-    // Expose for debugging
+    // Expose API for debugging and manual control
     window.GSFilterFix = {
-        CONFIG,
-        SortingManager,
-        PopupManager,
-        AjaxInterceptor,
-        reinit: () => PopupManager.reinitializeAll(),
-        debug: (enabled) => { CONFIG.debug = enabled; }
+        version: '2.0.0',
+        config: CONFIG,
+        sorting: SortingManager,
+        popups: PopupManager,
+
+        // Debug helpers
+        debug(enabled) { CONFIG.debug = enabled; },
+        reinitPopups() { PopupManager.reinitialize(); },
+        getCurrentSort() { return SortingManager.getCurrentSortValue(); },
+
+        // Manual popup control
+        openPopup(id) {
+            const popup = document.getElementById(id);
+            if (popup) PopupManager.openPopup(popup);
+        },
+        closePopup(id) {
+            const popup = document.getElementById(id);
+            if (popup) PopupManager.closePopup(popup);
+        }
     };
 
 })();

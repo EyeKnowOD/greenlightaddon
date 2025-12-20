@@ -1,37 +1,42 @@
 <?php
 /**
- * Greenshift Filter Fix - Standalone PHP Snippet
+ * Greenshift Filter Fix v2.0 - Standalone PHP Snippet
  *
  * Add this to your theme's functions.php or use a Code Snippets plugin.
  *
  * Fixes:
- * 1. Sorting resets after applying filters
- * 2. Popups stop working after AJAX content replacement
+ * 1. Sorting lost when filters applied (preserves sort in URL)
+ * 2. Popups stop working after filter navigation
+ *
+ * How it works:
+ * - Intercepts filter link clicks
+ * - Injects current sorting value into URL before navigation
+ * - Uses event delegation for popups (works with dynamic content)
  */
 
-add_action('wp_footer', 'greenshift_filter_fix_inline_script', 100);
+add_action('wp_footer', 'greenshift_filter_fix_script', 100);
 
-function greenshift_filter_fix_inline_script() {
+function greenshift_filter_fix_script() {
     // Only load on frontend
     if (is_admin()) {
         return;
     }
     ?>
     <style>
-    /* Popup visibility fixes */
+    /* Popup visibility states */
     .gspb_popup, .gs-popup, .gspb_slidingpanel, .gs-sliding-panel {
         visibility: hidden;
         opacity: 0;
         pointer-events: none;
         transition: opacity 0.3s ease, visibility 0.3s ease;
     }
-    .gspb_popup.is-active, .gspb_popup.gs-popup-active, .gspb_popup.gspb_popup_active,
-    .gs-popup.is-active, .gspb_slidingpanel.is-active, .gs-sliding-panel.is-active {
+    .gspb_popup.is-active, .gspb_popup.gspb_popup_active,
+    .gspb_slidingpanel.is-active, .gs-sliding-panel.is-active {
         visibility: visible !important;
         opacity: 1 !important;
         pointer-events: auto !important;
     }
-    body.gs-popup-open, body.gspb-popup-open { overflow: hidden; }
+    body.gspb-popup-open { overflow: hidden; }
     .gspb_popup, .gs-popup { z-index: 999999 !important; }
     </style>
 
@@ -39,210 +44,253 @@ function greenshift_filter_fix_inline_script() {
     (function() {
         'use strict';
 
-        var debug = false;
+        var DEBUG = false;
+        var STORAGE_KEY = 'gs_sort_value';
 
         function log() {
-            if (debug) console.log.apply(console, ['[GS-Fix]'].concat(Array.from(arguments)));
+            if (DEBUG) console.log.apply(console, ['[GS-Fix]'].concat(Array.from(arguments)));
         }
 
         // ===============================
-        // POPUP REINITIALIZATION
+        // SORTING MANAGEMENT
         // ===============================
 
-        function reinitPopups() {
-            log('Reinitializing popups...');
+        var Sorting = {
+            // Get current value from sorting dropdown
+            getCurrentValue: function() {
+                var select = document.querySelector('.gspb_filtersorting select, [class*="filtersorting"] select');
+                return select ? select.value : null;
+            },
 
-            // Try Greenshift's native reinitialization
-            if (typeof window.gspbHooks !== 'undefined') {
-                if (typeof window.gspbHooks.initPopups === 'function') window.gspbHooks.initPopups();
-                if (typeof window.gspbHooks.initSlidingPanels === 'function') window.gspbHooks.initSlidingPanels();
-                if (typeof window.gspbHooks.initAll === 'function') window.gspbHooks.initAll();
-            }
+            // Store in sessionStorage
+            store: function(value) {
+                if (value) {
+                    try { sessionStorage.setItem(STORAGE_KEY, value); } catch(e) {}
+                }
+            },
 
-            if (typeof window.gspb !== 'undefined' && typeof window.gspb.initInteractions === 'function') {
-                window.gspb.initInteractions();
-            }
+            // Retrieve stored value
+            retrieve: function() {
+                try { return sessionStorage.getItem(STORAGE_KEY); } catch(e) { return null; }
+            },
 
-            // Trigger custom events
-            document.dispatchEvent(new CustomEvent('gspb_content_loaded'));
-            document.dispatchEvent(new CustomEvent('gspb_ajax_complete'));
-        }
+            // Add sort param to URL
+            addToURL: function(url, sortValue) {
+                if (!sortValue) return url;
+                try {
+                    var urlObj = new URL(url, window.location.origin);
+                    // Check if already has sort param
+                    var sortParams = ['orderby', 'order', 'gspb_sort', 'sort'];
+                    var hasSort = sortParams.some(function(p) { return urlObj.searchParams.has(p); });
+                    if (!hasSort) {
+                        urlObj.searchParams.set('orderby', sortValue);
+                    }
+                    return urlObj.toString();
+                } catch(e) {
+                    return url;
+                }
+            },
 
-        function openPopup(popup) {
-            popup.classList.add('is-active', 'gs-popup-active', 'gspb_popup_active');
-            popup.style.display = 'block';
-            popup.style.visibility = 'visible';
-            popup.style.opacity = '1';
-            document.body.classList.add('gs-popup-open', 'gspb-popup-open');
-
-            // Bind close handlers
-            var closeBtn = popup.querySelector('.gs-popup-close, .gspb_popup_close, [data-close]');
-            if (closeBtn) {
-                closeBtn.addEventListener('click', function() { closePopup(popup); }, { once: true });
-            }
-
-            var overlay = popup.querySelector('.gs-popup-overlay, .gspb_popup_overlay');
-            if (overlay) {
-                overlay.addEventListener('click', function() { closePopup(popup); }, { once: true });
-            }
-        }
-
-        function closePopup(popup) {
-            popup.classList.remove('is-active', 'gs-popup-active', 'gspb_popup_active');
-            popup.style.display = '';
-            popup.style.visibility = '';
-            popup.style.opacity = '';
-            document.body.classList.remove('gs-popup-open', 'gspb-popup-open');
-        }
-
-        // ===============================
-        // EVENT DELEGATION (Works for dynamic content)
-        // ===============================
-
-        document.addEventListener('click', function(e) {
-            var trigger = e.target.closest('[data-popup], [data-sliding-panel], .gspb_popup_trigger, .gs-popup-trigger');
-            if (!trigger) return;
-
-            var popupId = trigger.dataset.popup ||
-                          trigger.dataset.slidingPanel ||
-                          trigger.dataset.target;
-
-            if (!popupId) {
-                var href = trigger.getAttribute('href');
-                if (href && href.startsWith('#')) {
-                    popupId = href.substring(1);
+            // Apply stored value to dropdown
+            applyToDropdown: function() {
+                var stored = this.retrieve();
+                if (!stored) return;
+                var select = document.querySelector('.gspb_filtersorting select, [class*="filtersorting"] select');
+                if (select) {
+                    var exists = Array.from(select.options).some(function(opt) { return opt.value === stored; });
+                    if (exists) select.value = stored;
                 }
             }
+        };
 
-            if (popupId) {
-                var popup = document.getElementById(popupId) ||
-                            document.querySelector('[data-popup-id="' + popupId + '"]');
+        // ===============================
+        // FILTER INTERCEPTION
+        // ===============================
 
-                if (popup) {
+        // Intercept filter link clicks - add sorting to URL
+        document.addEventListener('click', function(e) {
+            var link = e.target.closest('a');
+            if (!link || !link.href) return;
+
+            // Check if this is a filter link
+            var isFilter = link.closest('.gspb_filterpanel, [class*="filterpanel"]') ||
+                          link.href.indexOf('filter_') > -1 ||
+                          link.href.indexOf('gspb_filter') > -1;
+
+            if (isFilter) {
+                var currentSort = Sorting.getCurrentValue();
+                if (currentSort) {
                     e.preventDefault();
-                    e.stopPropagation();
-                    log('Opening popup:', popupId);
-
-                    // Try native method first
-                    if (typeof window.gspbHooks !== 'undefined' && window.gspbHooks.openPopup) {
-                        window.gspbHooks.openPopup(popup);
-                    } else if (typeof window.gspb !== 'undefined' && window.gspb.popup && window.gspb.popup.open) {
-                        window.gspb.popup.open(popup);
-                    } else {
-                        openPopup(popup);
-                    }
+                    Sorting.store(currentSort);
+                    var newURL = Sorting.addToURL(link.href, currentSort);
+                    log('Redirecting with sort:', newURL);
+                    window.location.href = newURL;
                 }
             }
         }, true);
 
-        // ===============================
-        // SORTING PRESERVATION
-        // ===============================
-
-        var sortingStates = {};
-
-        // Store sorting changes
+        // When sorting changes, update URL (for next filter click)
         document.addEventListener('change', function(e) {
-            var sortSelect = e.target.closest('.gspb_filtersorting select, .gs-filter-sorting select');
-            if (sortSelect) {
-                var key = window.location.pathname;
-                sortingStates[key] = sortSelect.value;
-                try {
-                    sessionStorage.setItem('gs_sorting_state', JSON.stringify(sortingStates));
-                } catch(err) {}
-                log('Sorting stored:', sortSelect.value);
+            var select = e.target.closest('.gspb_filtersorting select, [class*="filtersorting"] select');
+            if (select) {
+                var value = select.value;
+                Sorting.store(value);
+
+                // Update current URL with sort param
+                var url = new URL(window.location.href);
+                url.searchParams.set('orderby', value);
+                window.history.replaceState({}, '', url.toString());
+                log('URL updated with sort:', value);
             }
         });
 
-        // Restore on load
-        try {
-            var saved = sessionStorage.getItem('gs_sorting_state');
-            if (saved) sortingStates = JSON.parse(saved);
-        } catch(err) {}
-
         // ===============================
-        // AJAX INTERCEPTION
+        // POPUP MANAGEMENT
         // ===============================
 
-        // Intercept fetch
-        var originalFetch = window.fetch;
-        window.fetch = function() {
-            return originalFetch.apply(this, arguments).then(function(response) {
-                var url = arguments[0] && arguments[0].url ? arguments[0].url : arguments[0];
-                if (url && (url.includes('admin-ajax') || url.includes('gspb') || url.includes('filter'))) {
-                    setTimeout(reinitPopups, 150);
+        var Popups = {
+            open: function(popup) {
+                // Try native Greenshift first
+                if (window.gspbHooks && window.gspbHooks.openPopup) {
+                    window.gspbHooks.openPopup(popup);
+                    return;
                 }
-                return response;
-            });
-        };
 
-        // Intercept XHR
-        var origOpen = XMLHttpRequest.prototype.open;
-        var origSend = XMLHttpRequest.prototype.send;
+                // Fallback
+                popup.classList.add('is-active', 'gspb_popup_active');
+                popup.style.cssText = 'display:block;visibility:visible;opacity:1';
+                document.body.classList.add('gspb-popup-open');
 
-        XMLHttpRequest.prototype.open = function(method, url) {
-            this._gsUrl = url;
-            return origOpen.apply(this, arguments);
-        };
+                this.bindClose(popup);
+            },
 
-        XMLHttpRequest.prototype.send = function() {
-            var self = this;
-            if (this._gsUrl && (this._gsUrl.includes('admin-ajax') || this._gsUrl.includes('gspb'))) {
-                this.addEventListener('load', function() {
-                    setTimeout(reinitPopups, 150);
-                });
-            }
-            return origSend.apply(this, arguments);
-        };
+            close: function(popup) {
+                popup.classList.remove('is-active', 'gspb_popup_active');
+                popup.style.cssText = '';
+                document.body.classList.remove('gspb-popup-open');
+            },
 
-        // ===============================
-        // DOM OBSERVER (Backup method)
-        // ===============================
+            bindClose: function(popup) {
+                var self = this;
 
-        var observer = new MutationObserver(function(mutations) {
-            for (var i = 0; i < mutations.length; i++) {
-                if (mutations[i].addedNodes.length > 0) {
-                    var target = mutations[i].target;
-                    if (target.classList &&
-                        (target.classList.contains('gspb_query_builder') ||
-                         target.classList.contains('wp-block-flavor-query'))) {
-                        setTimeout(reinitPopups, 200);
-                        break;
+                // Close button
+                var closeBtn = popup.querySelector('.gspb_popup_close, [data-close], .popup-close');
+                if (closeBtn) {
+                    closeBtn.onclick = function(e) {
+                        e.preventDefault();
+                        self.close(popup);
+                    };
+                }
+
+                // Overlay
+                var overlay = popup.querySelector('.gspb_popup_overlay, .popup-overlay');
+                if (overlay) {
+                    overlay.onclick = function() { self.close(popup); };
+                }
+
+                // ESC key
+                var escHandler = function(e) {
+                    if (e.key === 'Escape') {
+                        self.close(popup);
+                        document.removeEventListener('keydown', escHandler);
+                    }
+                };
+                document.addEventListener('keydown', escHandler);
+            },
+
+            getIdFromTrigger: function(trigger) {
+                var id = trigger.dataset.popup ||
+                        trigger.dataset.sliding ||
+                        trigger.dataset.slidingPanel ||
+                        trigger.dataset.target;
+
+                if (!id) {
+                    var href = trigger.getAttribute('href');
+                    if (href && href.charAt(0) === '#') {
+                        id = href.substring(1);
                     }
                 }
+
+                return id;
+            },
+
+            reinit: function() {
+                log('Reinitializing popups...');
+
+                // Try Greenshift native methods
+                try {
+                    if (window.gspbHooks) {
+                        if (window.gspbHooks.initPopups) window.gspbHooks.initPopups();
+                        if (window.gspbHooks.initSlidingPanels) window.gspbHooks.initSlidingPanels();
+                        if (window.gspbHooks.initAll) window.gspbHooks.initAll();
+                    }
+                    if (window.gspb && window.gspb.initInteractions) {
+                        window.gspb.initInteractions();
+                    }
+                } catch(e) {}
+
+                document.dispatchEvent(new CustomEvent('gspb_content_loaded'));
             }
-        });
+        };
 
-        observer.observe(document.body, { childList: true, subtree: true });
+        // Event delegation for popup triggers - works for dynamic content
+        document.addEventListener('click', function(e) {
+            var trigger = e.target.closest('[data-popup], [data-sliding], .gspb_popup_trigger, [href^="#gspb_popup"]');
+            if (!trigger) return;
+
+            var popupId = Popups.getIdFromTrigger(trigger);
+            if (!popupId) return;
+
+            var popup = document.getElementById(popupId) ||
+                       document.querySelector('[data-popup-id="' + popupId + '"]');
+
+            if (popup) {
+                e.preventDefault();
+                e.stopPropagation();
+                log('Opening popup:', popupId);
+                Popups.open(popup);
+            }
+        }, true);
 
         // ===============================
-        // GREENSHIFT EVENTS
+        // INITIALIZATION
         // ===============================
 
-        ['gspb_filter_applied', 'gspb_filter_complete', 'gspb_pagination_complete',
-         'gsquery_loaded', 'flavor_filter_complete'].forEach(function(eventName) {
-            document.addEventListener(eventName, function() {
-                setTimeout(reinitPopups, 150);
-            });
-        });
+        function init() {
+            log('Greenshift Filter Fix v2.0 initialized');
+            Sorting.applyToDropdown();
+            Popups.reinit();
+        }
 
-        // ===============================
-        // INITIAL SETUP
-        // ===============================
+        // Run on DOM ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
 
+        // Run again on window load
         window.addEventListener('load', function() {
-            setTimeout(reinitPopups, 500);
+            setTimeout(function() {
+                Sorting.applyToDropdown();
+                Popups.reinit();
+            }, 500);
+        });
+
+        // Handle back/forward navigation
+        window.addEventListener('popstate', function() {
+            Sorting.applyToDropdown();
+            Popups.reinit();
         });
 
         // Expose for debugging
         window.GSFilterFix = {
-            reinit: reinitPopups,
-            debug: function(on) { debug = on; },
-            openPopup: openPopup,
-            closePopup: closePopup
+            version: '2.0.0',
+            debug: function(on) { DEBUG = on; },
+            sorting: Sorting,
+            popups: Popups,
+            reinit: function() { Popups.reinit(); }
         };
-
-        log('Greenshift Filter Fix initialized');
 
     })();
     </script>
